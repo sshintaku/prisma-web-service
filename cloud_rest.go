@@ -1,5 +1,7 @@
 package main
 
+// Version 1.0 of a middleware Rest call for Prisma Cloud
+
 import (
 	"encoding/json"
 	"fmt"
@@ -7,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/sshintaku/web_requests"
 
@@ -20,15 +23,9 @@ var token, computeBaseUrl string
 
 func main() {
 	router := gin.Default()
-	jsonFile, err := os.Open("config.json")
-	// if we os.Open returns an error then handle it
-	if err != nil {
-		fmt.Println(err)
-	}
-	configFile, _ := ioutil.ReadAll(jsonFile)
-	var Auth cloud_types.Authentication
-	json.Unmarshal(configFile, &Auth)
-	authResponse, _ := web_requests.GetJWTToken("https://api2.prismacloud.io/login", Auth.Username, Auth.Password)
+	username := os.Getenv("APIKEY")
+	password := os.Getenv("PASSWORD")
+	authResponse, _ := web_requests.GetJWTToken("https://api2.prismacloud.io/login", username, password)
 	token = authResponse.Token
 	computeUrl, baseUrlError := web_requests.GetComputeBaseUrl(token)
 	computeBaseUrl = computeUrl
@@ -37,20 +34,20 @@ func main() {
 	}
 	router.GET("/clouddiscovery", getCloudDiscovery)
 	router.Static("/assets", "./assets")
-	router.GET("clouddiscovery/:type", getCloudDiscoveryByType)
+	router.GET("clouddiscovery/bytype", getCloudDiscoveryByType)
 	router.GET("/", loadDefaultPage)
 
 	router.Run("localhost:8080")
 }
 
-func check(e error) {
-	if e != nil {
-		panic(e)
-	}
-}
-
 func getCloudDiscoveryByType(c *gin.Context) {
-	cloudType := c.Param("type")
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS")
+	cloudType := c.Query("type")
+	deployed, deployedError := strconv.ParseBool(c.Query("deployed"))
+	if deployedError != nil {
+		log.Fatal("Error converting query parameter to a bool value.")
+	}
 	url := computeBaseUrl + "/api/v1/cloud/discovery?project=Central+Console"
 	result, resultError := web_requests.GetMethod(url, token)
 	if resultError != nil {
@@ -64,12 +61,10 @@ func getCloudDiscoveryByType(c *gin.Context) {
 			var cr cloud_types.CloudTypeResult
 			cr.Region = ct.Region
 			for _, status := range ct.Entities {
-				if status.Defended == false {
-					cr.Status = "Resource group: " + status.ResourceGroup + " Resource Name: " + status.Name + "\n"
+				if status.Defended == deployed {
+					cr.Status = "<i><b>Resource group: </i></b>" + status.ResourceGroup + "<br><i><b>Resource Name: </i></b>" + status.Name + "\n"
+					returnResult = append(returnResult, cr)
 				}
-			}
-			if cr.Status != "" {
-				returnResult = append(returnResult, cr)
 			}
 		}
 	}
